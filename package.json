@@ -1,0 +1,16 @@
+{
+  "name": "lollipop-ranking-bot",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "deploy": "node deploy-commands.js"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "^0.1.66",
+    "discord.js": "^14.15.3",
+    "dotenv": "^16.4.5",
+    "fs-extra": "^11.3.2"
+  }
+}
