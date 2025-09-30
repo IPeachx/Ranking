@@ -217,7 +217,77 @@ function drawTable(ctx, entries, width, height, page = 1, perPage = 20) {
     y += rowH + 6;
   }
 }
+// Texto con puntos suspensivos si no cabe
+function fitText(ctx, text, maxWidth) {
+  if (ctx.measureText(text).width <= maxWidth) return text;
+  let t = text;
+  while (t.length > 1 && ctx.measureText(t + "…").width > maxWidth) {
+    t = t.slice(0, -1);
+  }
+  return t + "…";
+}
 
+// Dibuja la tabla de ranking
+async function drawTable(ctx, guild, entries, page, perPage, listX, listY, listW) {
+  // Alturas (usa los mismos valores que ya estás usando)
+  const HEAD_H = 36;      // alto del encabezado
+  const ROW_H  = 36;      // alto por fila
+  const start  = Math.max(0, (page - 1) * perPage);
+  const rows   = entries.slice(start, start + perPage);
+
+  // Encabezado
+  ctx.save();
+  ctx.globalAlpha = 1;
+  ctx.fillStyle   = "rgba(255,255,255,.12)";
+  roundedRect(ctx, listX, listY, listW, HEAD_H, 10);
+  ctx.fill();
+
+  ctx.fillStyle     = "#cfd3ff";
+  ctx.textBaseline  = "middle";
+  ctx.font          = `900 16px ${FONT_STACK}`;
+
+  ctx.textAlign = "left";
+  ctx.fillText("RANK", listX + 14, listY + HEAD_H / 2);
+  ctx.fillText("NAME", listX + 74, listY + HEAD_H / 2);
+
+  ctx.textAlign = "right";
+  ctx.fillText("HIGHEST SCORE", listX + listW - 14, listY + HEAD_H / 2);
+  ctx.restore();
+
+  // Columnas
+  const xRank = listX + 14;
+  const xName = listX + 74;
+  const xPts  = listX + listW - 14;
+  const nameMaxWidth = listW - 160; // deja espacio para la columna de puntos
+
+  // Filas
+  for (let i = 0; i < rows.length; i++) {
+    const e = rows[i];
+    const y = listY + HEAD_H + i * ROW_H;
+
+    // Fondo alternado por fila
+    ctx.fillStyle = i % 2 ? "rgba(255,255,255,.08)" : "rgba(255,255,255,.04)";
+    roundedRect(ctx, listX + 6, y + 4, listW - 12, ROW_H - 8, 8);
+    ctx.fill();
+
+    // Nº de ranking
+    ctx.fillStyle   = "#ffffff";
+    ctx.textAlign   = "left";
+    ctx.textBaseline= "middle";
+    ctx.font        = `900 18px ${FONT_STACK}`;
+    ctx.fillText(String(start + i + 1), xRank, y + ROW_H / 2 + 1);
+
+    // Nombre (resuelto por ID, truncado si no cabe)
+    const name = await fetchName(guild, e.userId);
+    ctx.font = `600 16px ${FONT_STACK}`;
+    ctx.fillText(fitText(ctx, name, nameMaxWidth), xName, y + ROW_H / 2 + 1);
+
+    // Puntos (derecha)
+    ctx.textAlign = "right";
+    ctx.font      = `900 18px ${FONT_STACK}`;
+    ctx.fillText(String(e.points), xPts, y + ROW_H / 2 + 1);
+  }
+}
 
 /* -------------------- imagen completa -------------------- */
 export async function buildLeaderboardImage(guild, entries) {
