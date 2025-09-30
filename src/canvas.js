@@ -1,15 +1,26 @@
 // src/canvas.js
+import fs from "node:fs";
+import path from "node:path";
 import { createCanvas, loadImage, GlobalFonts } from "@napi-rs/canvas";
 
-// Registrar una fuente para texto (necesario en Windows con @napi-rs/canvas)
+// --- registro de fuente robusto (no crashea si falta el archivo) ---
 try {
-  if (!GlobalFonts.has("Arial")) {
-    // ruta típica de Windows
-    GlobalFonts.registerFromPath("C:/Windows/Fonts/arial.ttf", "Arial");
+  const fontPath = path.join(process.cwd(), "assets", "fonts", "Inter.ttf");
+  if (fs.existsSync(fontPath)) {
+    GlobalFonts.registerFromPath(fontPath, "Inter");
+    console.log("[canvas] Inter.ttf registrado");
+  } else {
+    console.warn("[canvas] Inter.ttf no encontrado, usando sans-serif del sistema");
   }
 } catch (e) {
-  console.error("[canvas] No se pudo registrar Arial:", e);
+  console.warn("[canvas] No se pudo registrar la fuente:", e?.message || e);
 }
+
+// Usa una pila de fuentes para no crashear si no hay Inter
+const fontStack = "Inter, Arial, sans-serif";
+
+// …y cada vez que pongas fuente:
+ctx.font = `16px ${fontStack}`;
 
 /* ========== helpers ========== */
 function roundedRect(ctx, x, y, w, h, r) {
