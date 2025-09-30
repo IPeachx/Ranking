@@ -1,5 +1,6 @@
 // src/canvas.js
 import { createCanvas, loadImage } from "@napi-rs/canvas";
+
 async function fetchTop3Avatars(guild, entries) {
   const urls = [];
   for (let i = 0; i < 3; i++) {
@@ -15,8 +16,7 @@ async function fetchTop3Avatars(guild, entries) {
     try { imgs.push(await loadImage(u)); } catch { imgs.push(null); }
   }
   return imgs;
-  }
-
+}
 
 function roundedRect(ctx, x, y, w, h, r) {
   ctx.beginPath();
@@ -40,7 +40,7 @@ function drawHeader(ctx, w) {
   ctx.fillStyle = "white";
   ctx.font = "bold 40px Sans-serif";
   ctx.textAlign = "center";
-  ctx.fillText("LEADERBOARD", w / 2, 60);
+  ctx.fillText("LEADERBOARD – Staff", w / 2, 60);
 }
 
 function drawTop3(ctx, entries, names, avatars) {
@@ -134,18 +134,22 @@ export async function buildLeaderboardImage(guild, entries, page = 1, perPage = 
   const canvas = createCanvas(width, dynamicHeight);
   const ctx = canvas.getContext("2d");
 
+  // ⬇️ NUEVO: pinta el fondo y el título antes de todo
+  drawGradientBG(ctx, width, dynamicHeight);
+  drawHeader(ctx, width);
+
+  // Nombres (hasta el rango que se va a mostrar)
   const names = [];
-for (let e of entries.slice(0, page * perPage)) {
-  const member = await guild.members.fetch(e.userId).catch(() => null);
-  const name = member?.displayName ?? `User ${e.userId.slice(0, 4)}`;
-  names.push(name);
-}
+  for (let e of entries.slice(0, page * perPage)) {
+    const member = await guild.members.fetch(e.userId).catch(() => null);
+    const name = member?.displayName ?? `User ${e.userId.slice(0, 4)}`;
+    names.push(name);
+  }
 
-// Cargar avatares del TOP 3 y pintarlos
-const avatars = await fetchTop3Avatars(guild, entries);
-drawTop3(ctx, entries, names, avatars);
-
-drawList(ctx, entries, names, page, perPage);
+  // Avatares + render
+  const avatars = await fetchTop3Avatars(guild, entries);
+  drawTop3(ctx, entries, names, avatars);
+  drawList(ctx, entries, names, page, perPage);
 
   return canvas.toBuffer("image/png");
 }
