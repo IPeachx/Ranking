@@ -1,7 +1,7 @@
 // src/canvas.js
 import { createCanvas, loadImage } from "@napi-rs/canvas";
 
-/* ================== Utilidades ================== */
+/* ========== helpers ========== */
 function roundedRect(ctx, x, y, w, h, r) {
   ctx.beginPath();
   ctx.moveTo(x + r, y);
@@ -20,7 +20,6 @@ function drawBG(ctx, w, h) {
   ctx.fillRect(0, 0, w, h);
 }
 
-/* ============== Top3 (medallas + avatar) ============== */
 async function fetchTop3Avatars(guild, entries) {
   const urls = [];
   for (let i = 0; i < 3; i++) {
@@ -29,7 +28,6 @@ async function fetchTop3Avatars(guild, entries) {
     const m = await guild.members.fetch(e.userId).catch(() => null);
     urls.push(m?.displayAvatarURL({ extension: "png", size: 256 }) ?? null);
   }
-
   const imgs = [];
   for (const u of urls) {
     if (!u) { imgs.push(null); continue; }
@@ -38,12 +36,13 @@ async function fetchTop3Avatars(guild, entries) {
   return imgs;
 }
 
+/* ========== TOP 3 ========== */
 function drawTop3(ctx, entries, names, avatars) {
   // orden visual: PLATA — ORO — BRONCE
   const places = [
-    { cx: 140, label: "PLATA", color: "#c0c0c0" }, // 2°
-    { cx: 350, label: "ORO",   color: "#ffd700" }, // 1°
-    { cx: 560, label: "BRONCE",color: "#cd7f32" }  // 3°
+    { cx: 140, label: "PLATA", color: "#c0c0c0" },
+    { cx: 350, label: "ORO",   color: "#ffd700" },
+    { cx: 560, label: "BRONCE",color: "#cd7f32" }
   ];
   const y = 135;
   const R = 48;
@@ -56,7 +55,7 @@ function drawTop3(ctx, entries, names, avatars) {
     const name = names[i] || "User";
     const av = avatars?.[i] ?? null;
 
-    // etiqueta (PLATA/ORO/BRONCE)
+    // etiqueta
     ctx.fillStyle = places[i].color;
     ctx.font = "bold 24px Sans-serif";
     ctx.fillText(places[i].label, places[i].cx, y - 65);
@@ -83,7 +82,7 @@ function drawTop3(ctx, entries, names, avatars) {
   }
 }
 
-/* ============== Tabla (encabezado + filas) ============== */
+/* ========== TABLA ========== */
 function drawTable(ctx, entries, names, startY) {
   const x = 40, w = 620;
   const HEADER_H = 52;
@@ -128,7 +127,6 @@ function drawTable(ctx, entries, names, startY) {
     ctx.textAlign = "left";
     ctx.font = "16px Sans-serif";
     ctx.fillText(String(r.rank), x + 20, y);
-    // nombre recortado a 28 chars
     const shown = r.name.length > 28 ? r.name.slice(0, 28) + "…" : r.name;
     ctx.fillText(shown, x + 90, y);
 
@@ -139,18 +137,18 @@ function drawTable(ctx, entries, names, startY) {
     y += ROW_H;
   }
 
-  return totalH + 20; // altura ocupada por la tabla
+  return totalH + 20;
 }
 
-/* ============== Imagen completa ============== */
-export async function buildLeaderboardImage(guild, entries, page = 1, perPage = 10) {
-  // — Queremos TODA la lista en una sola imagen —
-  const fullEntries = entries.slice();               // ya vienen ordenados arriba
+/* ========== IMAGEN COMPLETA (toda la lista) ========== */
+export async function buildLeaderboardImage(guild, entries, _page = 1, _perPage = 10) {
+  // SIEMPRE generamos una sola imagen con TODA la lista
+  const fullEntries = entries.slice();
   const totalRows   = fullEntries.length;
 
-  // Altura dinámica
+  // alturas dinámicas
   const WIDTH = 700;
-  const TOP_BLOCK = 220; // zona top3
+  const TOP_BLOCK = 220; // top3
   const ROW_H = 38, HEADER_H = 52, TABLE_MARGIN = 40;
   const TABLE_H = HEADER_H + (Math.max(totalRows, 1) * ROW_H) + 20;
   const HEIGHT = TOP_BLOCK + TABLE_MARGIN + TABLE_H + 40;
@@ -158,16 +156,14 @@ export async function buildLeaderboardImage(guild, entries, page = 1, perPage = 
   const canvas = createCanvas(WIDTH, HEIGHT);
   const ctx = canvas.getContext("2d");
 
-  // Fondo
+  // fondo + título
   drawBG(ctx, WIDTH, HEIGHT);
-
-  // Título
   ctx.fillStyle = "#ffffff";
   ctx.textAlign = "center";
   ctx.font = "bold 34px Sans-serif";
   ctx.fillText("LEADERBOARD – Staff", WIDTH / 2, 50);
 
-  // Nombres (para toda la lista)
+  // nombres
   const names = [];
   for (let i = 0; i < fullEntries.length; i++) {
     const e = fullEntries[i];
@@ -175,12 +171,11 @@ export async function buildLeaderboardImage(guild, entries, page = 1, perPage = 
     names.push(m?.displayName ?? `User ${e.userId.slice(0, 4)}`);
   }
 
-  // Top3 (con avatares)
+  // top3 + tabla
   const avatars = await fetchTop3Avatars(guild, fullEntries);
   drawTop3(ctx, fullEntries, names, avatars);
 
-  // Tabla
-  const tableStartY = 220 + 40; // debajo del top3
+  const tableStartY = 220 + 40;
   drawTable(ctx, fullEntries, names, tableStartY);
 
   return canvas.toBuffer("image/png");
