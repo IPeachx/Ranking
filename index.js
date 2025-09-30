@@ -49,8 +49,8 @@ async function sendLogEmbed(guild, type, data) {
     await ch.send({ embeds: [embed] });
   } catch (e) { console.error("Log error:", e); }
 }
-// --- Auto-roles & anuncios de podio ---
 
+// --- Auto-roles & anuncios de podio ---
 const GOLD_ROLE_ID = process.env.GOLD_ROLE_ID || null;
 const SILVER_ROLE_ID = process.env.SILVER_ROLE_ID || null;
 const BRONZE_ROLE_ID = process.env.BRONZE_ROLE_ID || null;
@@ -61,9 +61,7 @@ const MEDAL_NAMES = ["ORO", "PLATA", "BRONCE"];
 const MEDAL_EMOJI = ["🥇", "🥈", "🥉"];
 const MEDAL_COLOR = [0xF1C40F, 0xBDC3C7, 0xCD7F32];
 
-/** Sincroniza los roles Oro/Plata/Bronce con el top3 actual.
- *  top3: [{ id, name, points }, ...] en orden 1,2,3
- */
+/** Sincroniza los roles Oro/Plata/Bronce con el top3 actual. */
 async function syncPodiumRoles(guild, top3) {
   const targets = [top3[0]?.id || null, top3[1]?.id || null, top3[2]?.id || null];
   console.log("[podium] Objetivos:", targets);
@@ -110,28 +108,23 @@ async function syncPodiumRoles(guild, top3) {
 
 /** Crea diffs de podio entre before y after */
 function diffPodium(before, after) {
-  const b = new Map(before.map((e, idx) => [e.id, idx])); // id -> pos
+  const b = new Map(before.map((e, idx) => [e.id, idx]));
   const a = new Map(after.map((e, idx) => [e.id, idx]));
-
   const events = [];
 
-  // Entradas nuevas o ascensos/cambios dentro del top3
   for (const [id, posAfter] of a.entries()) {
     const posBefore = b.has(id) ? b.get(id) : null;
     if (posBefore === null) {
-      events.push({ type: "enter", id, posAfter }); // entró al podio
+      events.push({ type: "enter", id, posAfter });
     } else if (posAfter < posBefore) {
-      events.push({ type: "promote", id, from: posBefore, to: posAfter }); // subió
+      events.push({ type: "promote", id, from: posBefore, to: posAfter });
     } else if (posAfter > posBefore) {
-      events.push({ type: "demote", id, from: posBefore, to: posAfter }); // bajó
+      events.push({ type: "demote", id, from: posBefore, to: posAfter });
     }
   }
-
-  // Los que salieron del top3
   for (const [id, posBefore] of b.entries()) {
     if (!a.has(id)) events.push({ type: "leave", id, from: posBefore });
   }
-
   return events;
 }
 
@@ -144,7 +137,6 @@ async function announcePodiumDiff(guild, beforeTop3, afterTop3, triggeredByTag) 
   const evt = diffPodium(beforeTop3, afterTop3);
   if (!evt.length) return;
 
-  // Construye un embed compacto
   const lines = [];
   for (const e of evt) {
     if (e.type === "enter") {
@@ -154,7 +146,6 @@ async function announcePodiumDiff(guild, beforeTop3, afterTop3, triggeredByTag) 
       const userId = afterTop3[e.to].id;
       lines.push(`⬆️ <@${userId}> ascendió de **${MEDAL_NAMES[e.from]}** a **${MEDAL_NAMES[e.to]}**`);
     } else if (e.type === "demote") {
-      // opcional anunciar democión
       const name = beforeTop3[e.from].name;
       lines.push(`⬇️ ${name} bajó de **${MEDAL_NAMES[e.from]}** a **${MEDAL_NAMES[e.to]}**`);
     } else if (e.type === "leave") {
@@ -163,7 +154,6 @@ async function announcePodiumDiff(guild, beforeTop3, afterTop3, triggeredByTag) 
     }
   }
 
-  const color = MEDAL_COLOR[afterTop3[0] ? 0 : 2];
   const embed = new EmbedBuilder()
     .setColor(0xFFC0CB)
     .setTitle("🏁 Actualización del Podio")
@@ -212,18 +202,31 @@ client.on("interactionCreate", async (i) => {
         break;
       }
 
+      // ====== ARREGLADO: SOLO IMAGEN + VALIDACIÓN DE BUFFER ======
       case "ranking-image": {
         await i.deferReply();
-        const page = i.options.getInteger("pagina") ?? 1;
+
+        const page  = i.options.getInteger("pagina") ?? 1;
         const todos = i.options.getBoolean("todos") ?? false;
+
         const entries = await getSorted();
         const per = todos ? Math.max(entries.length, 1) : 10;
-        const buffer = await buildLeaderboardImage(i.guild, entries, page, per);
+
+        const buffer = await buildLeaderboardImage(i.guild, entries, page, per)
+          .catch(err => { console.error("[/ranking-image] buildLeaderboardImage error:", err); return null; });
+
+        console.log("[/ranking-image] buffer bytes:", buffer?.length);
+
+        if (!buffer || !Buffer.isBuffer(buffer) || buffer.length < 1000) {
+          await i.editReply({ content: "❌ No pude generar la imagen del ranking (buffer vacío). Revisa logs en Railway." });
+          break;
+        }
+
         const file = new AttachmentBuilder(buffer, { name: "ranking.png" });
         await i.editReply({ files: [file] });
-
         break;
       }
+      // ===========================================================
 
       case "rank-add-user": {
         if (!canUse(i.member)) return i.reply({ content: "⛔ No tienes permiso para usar este comando.", ephemeral: true });
@@ -290,12 +293,12 @@ client.on("interactionCreate", async (i) => {
         await announcePodiumDiff(i.guild, beforeTop3, afterTop3, i.user.tag);
         break;
       }
+
       case "rank-reset": {
         if (!canUse(i.member)) {
           return i.reply({ content: "⛔ No tienes permiso para usar este comando.", ephemeral: true });
         }
 
-      }
         // 1) Podio ANTES del reset
         const beforeTop3 = await snapshotTop3(i.guild, await getSorted());
 
@@ -317,47 +320,45 @@ client.on("interactionCreate", async (i) => {
         // 7) Anuncio del cambio de podio
         await announcePodiumDiff(i.guild, beforeTop3, afterTop3, i.user.tag);
         break;
-        
-  
+      }
+
       case "rank-export": {
-      if (!canUse(i.member)) return i.reply({ content: "⛔ No tienes permiso para usar este comando.", ephemeral: true });
-      const entries = await getSorted();
-      const data = JSON.stringify(entries, null, 2);
-      const path = "data/export.json";
-      await fs.writeFile(path, data);
-      const file = new AttachmentBuilder(path);
-      await i.reply({ content: "📦 Exportación lista.", files: [file], ephemeral: true });
-      const top3 = await snapshotTop3(i.guild, entries);
-      await sendLogEmbed(i.guild, "export", { byTag: i.user.tag, beforeTop3: top3 });
-      break;
+        if (!canUse(i.member)) return i.reply({ content: "⛔ No tienes permiso para usar este comando.", ephemeral: true });
+        const entries = await getSorted();
+        const data = JSON.stringify(entries, null, 2);
+        const path = "data/export.json";
+        await fs.writeFile(path, data);
+        const file = new AttachmentBuilder(path);
+        await i.reply({ content: "📦 Exportación lista.", files: [file], ephemeral: true });
+        const top3 = await snapshotTop3(i.guild, entries);
+        await sendLogEmbed(i.guild, "export", { byTag: i.user.tag, beforeTop3: top3 });
+        break;
       }
 
       case "rank-sync-podium": {
-      if (!canUse(i.member)) return i.reply({ content: "⛔ No tienes permiso.", ephemeral: true });
-      await i.deferReply({ ephemeral: true });
-      console.log("[podium] ENV", { GOLD_ROLE_ID, SILVER_ROLE_ID, BRONZE_ROLE_ID, ANNOUNCE_CHANNEL_ID });
-      const entries = await getSorted();
-      const top = await snapshotTop3(i.guild, entries);
-      console.log("[podium] Top3 actual:", top);
-      await syncPodiumRoles(i.guild, top);
-      await i.editReply("✅ Roles de podio sincronizados con el Top 3 actual. Revisa la consola.");
-      break;
+        if (!canUse(i.member)) return i.reply({ content: "⛔ No tienes permiso.", ephemeral: true });
+        await i.deferReply({ ephemeral: true });
+        console.log("[podium] ENV", { GOLD_ROLE_ID, SILVER_ROLE_ID, BRONZE_ROLE_ID, ANNOUNCE_CHANNEL_ID });
+        const entries = await getSorted();
+        const top = await snapshotTop3(i.guild, entries);
+        console.log("[podium] Top3 actual:", top);
+        await syncPodiumRoles(i.guild, top);
+        await i.editReply("✅ Roles de podio sincronizados con el Top 3 actual. Revisa la consola.");
+        break;
       }
-} 
+    }
 
   } catch (err) {
     console.error(err);
-   if (i.deferred || i.replied) {
+    if (i.deferred || i.replied) {
       await i.editReply({ content: "❌ Ocurrió un error." });
     } else {
       await i.reply({ content: "❌ Ocurrió un error.", ephemeral: true });
     }
   }
-}); 
+});
 
 client.login(process.env.DISCORD_TOKEN);
-
-
 
 // ========== [RANKING/TICKETS ADDONS] ==========
 
