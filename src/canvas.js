@@ -1,7 +1,8 @@
 // src/canvas.js
 import path from "node:path";
 import { existsSync } from "node:fs";
-import { createCanvas, loadImage, registerFont } from "@napi-rs/canvas";
+import pkg from "@napi-rs/canvas";
+const { createCanvas, loadImage, registerFont } = pkg;
 
 /* ---------- fuente segura (no crashea si falta) ---------- */
 (function safeFont() {

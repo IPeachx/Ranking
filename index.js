@@ -218,11 +218,12 @@ client.on("interactionCreate", async (i) => {
     break;
   }
 
-  const buffer = await buildLeaderboardImage(i.guild, entries, page, per)
-    .catch(err => { 
-      console.error("[/ranking-image] buildLeaderboardImage error:", err); 
-      return null; 
-    });
+  const buffer = await buildLeaderboardImage(i.guild, entries).catch(() => null);
+if (!buffer || !Buffer.isBuffer(buffer) || buffer.length < 1000) {
+  await i.editReply({ content: "❌ No pude generar la imagen del ranking (buffer vacío). Revisa logs en Railway." });
+  break;
+}
+await i.editReply({ files: [new AttachmentBuilder(buffer, { name: "ranking.png" })] });
 
   console.log("[/ranking-image] buffer bytes:", buffer?.length);
 
