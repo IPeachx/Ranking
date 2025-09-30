@@ -56,6 +56,58 @@ function drawText(ctx, str, x, y, {
   ctx.restore();
 }
 
+// ---------- Dibuja Top 3 (oro centro, plata izq, bronce der) ----------
+async function drawTop3(ctx, guild, list, cx, topY, gapX) {
+  // list viene ordenado: [oro, plata, bronce] o [0]=oro, [1]=plata, [2]=bronce
+  const places = [
+    { label: "PLATA",  color: "#c0c0c0", x: cx - gapX, idx: 1, rank: 2 },
+    { label: "ORO",    color: "#ffd700", x: cx,       idx: 0, rank: 1 },
+    { label: "BRONCE", color: "#cd7f32", x: cx + gapX, idx: 2, rank: 3 },
+  ];
+
+  ctx.textAlign = "center";
+
+  for (const p of places) {
+    const e = list[p.idx];
+    if (!e) continue;
+
+    // Título (PLATA/ORO/BRONCE)
+    ctx.fillStyle = p.color;
+    ctx.font = `900 22px ${FONT_STACK}`;
+    ctx.fillText(p.label, p.x, topY);
+
+    // Avatar circular
+    const r = 44;
+    const y = topY + 38;
+    const img = await fetchAvatar(guild, e.userId, 256); // usa tu helper existente
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(p.x, y, r, 0, Math.PI * 2);
+    ctx.closePath();
+    ctx.clip();
+    if (img) ctx.drawImage(img, p.x - r, y - r, r * 2, r * 2);
+    ctx.restore();
+
+    // Borde del avatar
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = "rgba(255,255,255,.9)";
+    ctx.beginPath();
+    ctx.arc(p.x, y, r, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Nombre y puntos
+    const name = await fetchName(guild, e.userId); // helper existente
+    ctx.fillStyle = "#fff";
+    ctx.font = `600 18px ${FONT_STACK}`;
+    ctx.fillText(name, p.x, y + 34);
+
+    ctx.font = `900 18px ${FONT_STACK}`;
+    ctx.fillText(`${e.points} pts`, p.x, y + 58);
+  }
+}
+
+
 
 function truncate(ctx, text, maxW) {
   if (ctx.measureText(text).width <= maxW) return text;
