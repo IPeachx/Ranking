@@ -204,28 +204,38 @@ client.on("interactionCreate", async (i) => {
 
       // ====== ARREGLADO: SOLO IMAGEN + VALIDACIÓN DE BUFFER ======
       case "ranking-image": {
-        await i.deferReply();
+  await i.deferReply();
 
-        const page  = i.options.getInteger("pagina") ?? 1;
-        const todos = i.options.getBoolean("todos") ?? false;
+  // Forzar a que la imagen contenga TODA la lista en una sola página
+  const entries = await getSorted();
+  const page = 1;
+  const per  = Math.max(entries.length, 1);
 
-        const entries = await getSorted();
-        const per = todos ? Math.max(entries.length, 1) : 10;
+  console.log("[/ranking-image] entries:", entries.length, "page:", page, "per:", per);
 
-        const buffer = await buildLeaderboardImage(i.guild, entries, page, per)
-          .catch(err => { console.error("[/ranking-image] buildLeaderboardImage error:", err); return null; });
+  if (entries.length === 0) {
+    await i.editReply({ content: "ℹ️ No hay usuarios en el ranking todavía." });
+    break;
+  }
 
-        console.log("[/ranking-image] buffer bytes:", buffer?.length);
+  const buffer = await buildLeaderboardImage(i.guild, entries, page, per)
+    .catch(err => { 
+      console.error("[/ranking-image] buildLeaderboardImage error:", err); 
+      return null; 
+    });
 
-        if (!buffer || !Buffer.isBuffer(buffer) || buffer.length < 1000) {
-          await i.editReply({ content: "❌ No pude generar la imagen del ranking (buffer vacío). Revisa logs en Railway." });
-          break;
-        }
+  console.log("[/ranking-image] buffer bytes:", buffer?.length);
 
-        const file = new AttachmentBuilder(buffer, { name: "ranking.png" });
-        await i.editReply({ files: [file] });
-        break;
-      }
+  if (!buffer || !Buffer.isBuffer(buffer) || buffer.length < 1000) {
+    await i.editReply({ content: "❌ No pude generar la imagen del ranking (buffer vacío). Revisa logs en Railway." });
+    break;
+  }
+
+  const file = new AttachmentBuilder(buffer, { name: "ranking.png" });
+  await i.editReply({ files: [file] });
+  break;
+}
+
       // ===========================================================
 
       case "rank-add-user": {
@@ -605,27 +615,27 @@ client.on("interactionCreate", async (i) => {
 });
 
 // Prefijo !Ranking (opcional)
+// Prefijo !Ranking (solo imagen, con toda la lista en una sola imagen)
 const RANK_COOLDOWN = new Map();
 client.on("messageCreate", async (msg) => {
   try {
     if (!msg.guild || msg.author.bot) return;
     if (!/^!ranking\b/i.test(msg.content.trim())) return;
 
-    const key = msg.channel.id;
-    const last = RANK_COOLDOWN.get(key) || 0;
+    const last = RANK_COOLDOWN.get(msg.channel.id) || 0;
     if (Date.now() - last < 5000) return;
-    RANK_COOLDOWN.set(key, Date.now());
-
-    // parseo simple de args (!ranking p=2 todos)
-    const args = msg.content.trim().split(/\s+/).slice(1);
-    let page = 1, todos = false;
-    for (const a of args) {
-      if (/^(p=)?\d+$/i.test(a)) page = parseInt(a.replace(/^p=/i, ""), 10);
-      if (/^(todos|all)$/i.test(a)) todos = true;
-    }
+    RANK_COOLDOWN.set(msg.channel.id, Date.now());
 
     const entries = await getSorted();
-    const per = todos ? Math.max(entries.length, 1) : 10;
+    const page = 1;
+    const per  = Math.max(entries.length, 1);
+
+    console.log("[!ranking] entries:", entries.length, "page:", page, "per:", per);
+
+    if (entries.length === 0) {
+      await msg.reply("ℹ️ No hay usuarios en el ranking todavía.");
+      return;
+    }
 
     const buffer = await buildLeaderboardImage(msg.guild, entries, page, per)
       .catch(err => { 
@@ -640,7 +650,7 @@ client.on("messageCreate", async (msg) => {
       return;
     }
 
-    // ✅ Solo imagen, sin embed (se ve grande como antes)
+    // ✅ Solo imagen, sin embed
     const file = new AttachmentBuilder(buffer, { name: "ranking.png" });
     await msg.reply({ files: [file] });
 
