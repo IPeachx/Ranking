@@ -1,203 +1,197 @@
 // src/canvas.js
-import fs from "node:fs";
 import path from "node:path";
-import { createCanvas, loadImage, GlobalFonts } from "@napi-rs/canvas";
+import { existsSync } from "node:fs";
+import { createCanvas, loadImage, registerFont } from "@napi-rs/canvas";
 
-// --- registro de fuente robusto (no crashea si falta el archivo) ---
-try {
-  const fontPath = path.join(process.cwd(), "assets", "fonts", "Inter.ttf");
-  if (fs.existsSync(fontPath)) {
-    GlobalFonts.registerFromPath(fontPath, "Inter");
-    console.log("[canvas] Inter.ttf registrado");
-  } else {
-    console.warn("[canvas] Inter.ttf no encontrado, usando sans-serif del sistema");
+/* ---------- fuente segura (no crashea si falta) ---------- */
+(function safeFont() {
+  try {
+    const p = path.join(process.cwd(), "assets", "fonts", "Inter.ttf");
+    if (existsSync(p)) {
+      registerFont(p, { family: "Inter" });
+      // console.log("[canvas] Inter.ttf registrada");
+    } else {
+      // console.warn("[canvas] Inter.ttf no encontrada, usando Arial/sans-serif");
+    }
+  } catch (e) {
+    // console.warn("[canvas] fallo registerFont, usando Arial/sans-serif:", e.message);
   }
-} catch (e) {
-  console.warn("[canvas] No se pudo registrar la fuente:", e?.message || e);
-}
+})();
+const FONT_STACK = "Inter, Arial, Helvetica, sans-serif";
 
-// Usa una pila de fuentes para no crashear si no hay Inter
-const fontStack = "Inter, Arial, sans-serif";
-
-// …y cada vez que pongas fuente:
-ctx.font = `16px ${fontStack}`;
-
-/* ========== helpers ========== */
-function roundedRect(ctx, x, y, w, h, r) {
+/* -------------------- helpers -------------------- */
+function roundedRect(ctx, x, y, w, h, r = 16) {
+  const rr = Math.min(r, w / 2, h / 2);
   ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
   ctx.closePath();
 }
 
-function drawBG(ctx, w, h) {
-  const g = ctx.createLinearGradient(0, 0, 0, h);
-  g.addColorStop(0, "#202562");
-  g.addColorStop(1, "#5661ff");
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, w, h);
+function truncate(ctx, text, maxW) {
+  if (ctx.measureText(text).width <= maxW) return text;
+  let lo = 0, hi = text.length;
+  while (lo < hi) {
+    const mid = ((lo + hi) >> 1) + 1;
+    if (ctx.measureText(text.slice(0, mid) + "…").width <= maxW) lo = mid;
+    else hi = mid - 1;
+  }
+  return text.slice(0, lo) + "…";
 }
 
-async function fetchTop3Avatars(guild, entries) {
-  const urls = [];
-  for (let i = 0; i < 3; i++) {
-    const e = entries[i];
-    if (!e) { urls.push(null); continue; }
-    const m = await guild.members.fetch(e.userId).catch(() => null);
-    urls.push(m?.displayAvatarURL({ extension: "png", size: 256 }) ?? null);
+async function fetchAvatar(guild, userId, size = 256) {
+  try {
+    const m = await guild.members.fetch(userId).catch(() => null);
+    if (!m) return null;
+    return await loadImage(m.displayAvatarURL({ extension: "png", size }));
+  } catch {
+    return null;
   }
-  const imgs = [];
-  for (const u of urls) {
-    if (!u) { imgs.push(null); continue; }
-    try { imgs.push(await loadImage(u)); } catch { imgs.push(null); }
-  }
-  return imgs;
 }
 
-/* ========== TOP 3 ========== */
-function drawTop3(ctx, entries, names, avatars) {
-  // orden visual: PLATA — ORO — BRONCE
+async function fetchName(guild, userId) {
+  try {
+    const m = await guild.members.fetch(userId).catch(() => null);
+    return m?.displayName ?? `User ${userId.slice(0, 4)}`;
+  } catch {
+    return `User ${userId.slice(0, 4)}`;
+  }
+}
+
+/* ------------- TOP 3 (oro centro, plata izquierda, bronce derecha) ------------- */
+async function drawTop3(ctx, guild, list, cx, topY, gapX) {
+  // list[0]=oro, [1]=plata, [2]=bronce (ya viene ordenado)
   const places = [
-    { cx: 140, label: "PLATA", color: "#c0c0c0" },
-    { cx: 350, label: "ORO",   color: "#ffd700" },
-    { cx: 560, label: "BRONCE",color: "#cd7f32" }
+    { label: "PLATA", color: "#c0c0c0", x: cx - gapX, rank: 2, idx: 1 },
+    { label: "ORO",   color: "#ffd700", x: cx,        rank: 1, idx: 0 },
+    { label: "BRONCE",color: "#cd7f32", x: cx + gapX, rank: 3, idx: 2 },
   ];
-  const y = 135;
-  const R = 48;
 
   ctx.textAlign = "center";
-
-  for (let i = 0; i < 3; i++) {
-    const e = entries[i];
+  for (const p of places) {
+    const e = list[p.idx];
     if (!e) continue;
-    const name = names[i] || "User";
-    const av = avatars?.[i] ?? null;
 
-    // etiqueta
-    ctx.fillStyle = places[i].color;
-    ctx.font = "bold 24px Sans-serif";
-    ctx.fillText(places[i].label, places[i].cx, y - 65);
+    // título
+    ctx.fillStyle = p.color;
+    ctx.font = `900 22px ${FONT_STACK}`;
+    ctx.fillText(p.label, p.x, topY);
 
-    // avatar circular con borde
+    // avatar circular
+    const img = await fetchAvatar(guild, e.userId, 256);
+    const r = 44, y = topY + 38;
     ctx.save();
     ctx.beginPath();
-    ctx.arc(places[i].cx, y, R, 0, Math.PI * 2);
+    ctx.arc(p.x, y, r, 0, Math.PI * 2);
+    ctx.closePath();
     ctx.clip();
-    if (av) ctx.drawImage(av, places[i].cx - R, y - R, R * 2, R * 2);
+    if (img) ctx.drawImage(img, p.x - r, y - r, r * 2, r * 2);
     ctx.restore();
-    ctx.strokeStyle = "#ffffff";
-    ctx.lineWidth = 5;
+    // borde
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = "rgba(255,255,255,.9)";
     ctx.beginPath();
-    ctx.arc(places[i].cx, y, R, 0, Math.PI * 2);
+    ctx.arc(p.x, y, r, 0, Math.PI * 2);
     ctx.stroke();
 
-    // nombre y puntos
+    // nombre + puntos
+    const name = await fetchName(guild, e.userId);
     ctx.fillStyle = "#fff";
-    ctx.font = "16px Sans-serif";
-    ctx.fillText(name, places[i].cx, y + 74);
-    ctx.font = "bold 18px Sans-serif";
-    ctx.fillText(`${e.points} pts`, places[i].cx, y + 98);
+    ctx.font = `600 18px ${FONT_STACK}`;
+    ctx.fillText(name, p.x, y + 34);
+    ctx.font = `900 18px ${FONT_STACK}`;
+    ctx.fillText(`${e.points} pts`, p.x, y + 58);
   }
 }
 
-/* ========== TABLA ========== */
-function drawTable(ctx, entries, names, startY) {
-  const x = 40, w = 620;
-  const HEADER_H = 52;
-  const ROW_H = 38;
+/* -------------------- imagen completa -------------------- */
+export async function buildLeaderboardImage(guild, entries) {
+  // ordenar y asegurar estructura
+  const data = [...entries].sort((a, b) => (b.points ?? 0) - (a.points ?? 0));
+  const rows = Math.max(data.length, 10);
 
-  const rows = entries.map((e, idx) => ({
-    rank: idx + 1,
-    name: names[idx] || "User",
-    points: e.points
-  }));
+  // layout
+  const W = 720;
+  const ROW_H = 44;
+  const TOP_AREA = 210;     // títulos + top3
+  const HEAD_H = 40;        // encabezado de tabla
+  const PAD = 24;
+  const H = TOP_AREA + HEAD_H + rows * ROW_H + PAD * 2;
 
-  const totalH = HEADER_H + (rows.length * ROW_H);
-
-  // tarjeta
-  ctx.fillStyle = "rgba(0,0,0,0.28)";
-  roundedRect(ctx, x, startY, w, totalH + 20, 16);
-  ctx.fill();
-
-  // encabezado
-  ctx.fillStyle = "#ffffff";
-  ctx.font = "bold 18px Sans-serif";
-  ctx.textAlign = "left";
-  ctx.fillText("RANK", x + 20, startY + 35);
-  ctx.fillText("NAME", x + 90, startY + 35);
-  ctx.textAlign = "right";
-  ctx.fillText("HIGHEST SCORE", x + w - 22, startY + 35);
-
-  // filas
-  let y = startY + HEADER_H;
-  for (let i = 0; i < rows.length; i++) {
-    const r = rows[i];
-
-    // franja alterna
-    if (i % 2 === 0) {
-      ctx.fillStyle = "rgba(255,255,255,0.06)";
-      roundedRect(ctx, x + 12, y - 24, w - 24, 30, 10);
-      ctx.fill();
-    }
-
-    // texto
-    ctx.fillStyle = "#fff";
-    ctx.textAlign = "left";
-    ctx.font = "16px Sans-serif";
-    ctx.fillText(String(r.rank), x + 20, y);
-    const shown = r.name.length > 28 ? r.name.slice(0, 28) + "…" : r.name;
-    ctx.fillText(shown, x + 90, y);
-
-    ctx.textAlign = "right";
-    ctx.font = "bold 16px Sans-serif";
-    ctx.fillText(String(r.points), x + w - 22, y);
-
-    y += ROW_H;
-  }
-
-  return totalH + 20;
-}
-
-/* ========== IMAGEN COMPLETA (toda la lista) ========== */
-export async function buildLeaderboardImage(guild, entries, _page = 1, _perPage = 10) {
-  // SIEMPRE generamos una sola imagen con TODA la lista
-  const fullEntries = entries.slice();
-  const totalRows   = fullEntries.length;
-
-  // alturas dinámicas
-  const WIDTH = 700;
-  const TOP_BLOCK = 220; // top3
-  const ROW_H = 38, HEADER_H = 52, TABLE_MARGIN = 40;
-  const TABLE_H = HEADER_H + (Math.max(totalRows, 1) * ROW_H) + 20;
-  const HEIGHT = TOP_BLOCK + TABLE_MARGIN + TABLE_H + 40;
-
-  const canvas = createCanvas(WIDTH, HEIGHT);
+  const canvas = createCanvas(W, H);
   const ctx = canvas.getContext("2d");
 
-  // fondo + título
-  drawBG(ctx, WIDTH, HEIGHT);
-  ctx.fillStyle = "#ffffff";
-  ctx.textAlign = "center";
-  ctx.font = "bold 34px Sans-serif";
-  ctx.fillText("LEADERBOARD – Staff", WIDTH / 2, 50);
+  // fondo degradado
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, "#1f266a");
+  g.addColorStop(1, "#5863f8");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
 
-  // nombres
-  const names = [];
-  for (let i = 0; i < fullEntries.length; i++) {
-    const e = fullEntries[i];
-    const m = await guild.members.fetch(e.userId).catch(() => null);
-    names.push(m?.displayName ?? `User ${e.userId.slice(0, 4)}`);
+  // título principal
+  ctx.fillStyle = "#fff";
+  ctx.textAlign = "left";
+  ctx.font = `900 26px ${FONT_STACK}`;
+  ctx.fillText("LEADERBOARD – Staff", PAD, PAD + 10);
+
+  // TOP 3
+  await drawTop3(ctx, guild, data, W / 2, PAD + 30, 200);
+
+  // contenedor tabla
+  const listX = PAD, listY = TOP_AREA, listW = W - PAD * 2, listH = HEAD_H + rows * ROW_H;
+  ctx.globalAlpha = 0.25;
+  roundedRect(ctx, listX, listY, listW, listH, 18);
+  ctx.fillStyle = "#000";
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
+  // header
+  ctx.fillStyle = "rgba(255,255,255,.1)";
+  roundedRect(ctx, listX + 12, listY + 8, listW - 24, HEAD_H - 12, 10);
+  ctx.fill();
+
+  ctx.fillStyle = "#fff";
+  ctx.textAlign = "left";
+  ctx.font = `800 16px ${FONT_STACK}`;
+  const colRankX = listX + 24;
+  const colNameX = listX + 90;
+  const colScoreX = listX + listW - 24; // derecha
+  ctx.fillText("RANK", colRankX, listY + HEAD_H - 12);
+  ctx.fillText("NAME", colNameX, listY + HEAD_H - 12);
+  ctx.textAlign = "right";
+  ctx.fillText("HIGHEST SCORE", colScoreX, listY + HEAD_H - 12);
+
+  // filas
+  const nameMaxW = listW - (colNameX - listX) - 140; // espacio para puntos
+  for (let i = 0; i < data.length; i++) {
+    const e = data[i];
+    const y = listY + HEAD_H + i * ROW_H;
+
+    // zebra
+    ctx.fillStyle = i % 2 ? "rgba(255,255,255,.06)" : "rgba(255,255,255,.03)";
+    roundedRect(ctx, listX + 12, y + 6, listW - 24, ROW_H - 10, 10);
+    ctx.fill();
+
+    // rank
+    ctx.textAlign = "left";
+    ctx.fillStyle = "#fff";
+    ctx.font = `700 15px ${FONT_STACK}`;
+    ctx.fillText(String(i + 1), colRankX, y + ROW_H - 14);
+
+    // name
+    const displayName = await fetchName(guild, e.userId);
+    ctx.font = `600 15px ${FONT_STACK}`;
+    const shown = truncate(ctx, displayName, nameMaxW);
+    ctx.fillText(shown, colNameX, y + ROW_H - 14);
+
+    // puntos
+    ctx.textAlign = "right";
+    ctx.font = `800 15px ${FONT_STACK}`;
+    ctx.fillText(String(e.points ?? 0), colScoreX, y + ROW_H - 14);
   }
-
-  // top3 + tabla
-  const avatars = await fetchTop3Avatars(guild, fullEntries);
-  drawTop3(ctx, fullEntries, names, avatars);
-
-  const tableStartY = 220 + 40;
-  drawTable(ctx, fullEntries, names, tableStartY);
 
   return canvas.toBuffer("image/png");
 }
