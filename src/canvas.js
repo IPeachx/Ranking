@@ -1,5 +1,15 @@
 // src/canvas.js
-import { createCanvas, loadImage } from "@napi-rs/canvas";
+import { createCanvas, loadImage, GlobalFonts } from "@napi-rs/canvas";
+
+// Registrar una fuente para texto (necesario en Windows con @napi-rs/canvas)
+try {
+  if (!GlobalFonts.has("Arial")) {
+    // ruta típica de Windows
+    GlobalFonts.registerFromPath("C:/Windows/Fonts/arial.ttf", "Arial");
+  }
+} catch (e) {
+  console.error("[canvas] No se pudo registrar Arial:", e);
+}
 
 /* ========== helpers ========== */
 function roundedRect(ctx, x, y, w, h, r) {
