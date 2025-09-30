@@ -616,6 +616,7 @@ client.on("messageCreate", async (msg) => {
     if (Date.now() - last < 5000) return;
     RANK_COOLDOWN.set(key, Date.now());
 
+    // parseo simple de args (!ranking p=2 todos)
     const args = msg.content.trim().split(/\s+/).slice(1);
     let page = 1, todos = false;
     for (const a of args) {
@@ -625,17 +626,26 @@ client.on("messageCreate", async (msg) => {
 
     const entries = await getSorted();
     const per = todos ? Math.max(entries.length, 1) : 10;
-    const buffer = await buildLeaderboardImage(msg.guild, entries, page, per);
-    const file   = new AttachmentBuilder(buffer, { name: "ranking.png" });
-    const emb    = new EmbedBuilder()
-      .setColor(0x5865F2)
-      .setTitle("LEADERBOARD – Staff")
-      .setImage("attachment://ranking.png")
-      .setFooter({ text: "Generado con !Ranking" })
-      .setTimestamp(new Date());
 
-    await msg.reply({ files: [file], embeds: [emb] });
+    const buffer = await buildLeaderboardImage(msg.guild, entries, page, per)
+      .catch(err => { 
+        console.error("[!ranking] buildLeaderboardImage error:", err); 
+        return null; 
+      });
+
+    console.log("[!ranking] buffer bytes:", buffer?.length);
+
+    if (!buffer || !Buffer.isBuffer(buffer) || buffer.length < 1000) {
+      await msg.reply("❌ No pude generar la imagen del ranking (buffer vacío). Revisa los logs de Railway.");
+      return;
+    }
+
+    // ✅ Solo imagen, sin embed (se ve grande como antes)
+    const file = new AttachmentBuilder(buffer, { name: "ranking.png" });
+    await msg.reply({ files: [file] });
+
   } catch (e) {
     console.error("[!ranking] error:", e);
   }
 });
+
