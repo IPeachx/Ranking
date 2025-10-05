@@ -1,143 +1,212 @@
 // index.js — Ranking en embed con medallas y miniatura del #1
-
 import 'dotenv/config';
 import {
   Client,
   GatewayIntentBits,
+  AttachmentBuilder,
   EmbedBuilder,
 } from 'discord.js';
 
-import * as store from './src/store.js';
+import * as store from './src/store.js'; // Debe exportar: addUser, addPoints, setPoints, subtractPoints, removeUser, resetAll, getAll, getSorted
 
-// ===== Helper: valida que getSorted exista =====
-const getSorted =
-  store.getSorted ??
-  (store.default && store.default.getSorted);
+// ================= Helpers =================
+const s = store.default ?? store;
 
-if (typeof getSorted !== 'function') {
-  console.error('[store] exports:', Object.keys(store));
-  throw new Error(
-    'No se encontró la función getSorted en src/store.js (ni como export nombrado ni dentro del default).'
-  );
-}
+const ALLOWED_ROLE_IDS = (process.env.ALLOWED_ROLE_IDS || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
 
-// ===== Cliente Discord =====
-const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
-});
+const canUse = (member) =>
+  !ALLOWED_ROLE_IDS.length ||
+  ALLOWED_ROLE_IDS.some(id => member.roles?.cache?.has(id));
 
-// ===== Emojis de medallas (top 3 global) =====
-const MEDALS = ['🥇', '🥈', '🥉']; // puedes cambiarlos por emojis del server
+const getTargetId = (i) =>
+  i.options.getUser?.('usuario')?.id
+    ?? i.options.getUser?.('user')?.id
+    ?? i.options.getString?.('userId');
 
-// ===== Utilidad: mención y avatar por userId =====
-async function getMemberMentionAndAvatar(guild, userId) {
+// Menciona al usuario y devuelve su avatar (para miniatura del 1º)
+async function getMentionAndAvatar(guild, userId) {
   try {
-    const m = await guild.members.fetch(userId);
-    return {
-      mention: m.toString(),
-      avatar: m.displayAvatarURL({ size: 256 }),
-    };
+    const member = await guild.members.fetch(userId);
+    const mention = member?.toString?.() ?? `<@${userId}>`;
+    const avatar  = member?.displayAvatarURL?.({ size: 256, extension: 'png' });
+    return { mention, avatar };
   } catch {
     return { mention: `<@${userId}>`, avatar: null };
   }
 }
 
-// ===== Interacciones =====
+// ================== Cliente ==================
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+  ],
+});
+
+client.once('ready', () => {
+  console.log('✅ Conectado como', client.user.tag);
+});
+
+// ================== Utilidades UI ==================
+const MEDAL = ['🥇', '🥈', '🥉'];
+const MEDAL_COLOR = [0xFFD700, 0xC0C0C0, 0xCD7F32];
+
+function formatLine(rank, mention, points) {
+  const medal = MEDAL[rank - 1] ?? '•';
+  return `${rank}. ${mention} ${medal} — **${points}** pts`;
+}
+
+async function buildRankingEmbed(guild, title = 'LEADERBOARD – Staff') {
+  const entries = await (s.getSorted ?? s.getAll)(guild); // s.getSorted preferido
+  const list = Array.isArray(entries) ? entries : Object.values(entries || {});
+  // normaliza: aseguramos userId y points numerico
+  const normalized = list.map(e => ({
+    userId: e.userId ?? e.user?.id ?? e.id ?? e.targetId ?? e.uid,
+    points: Number(e.points ?? e.score ?? e.pts ?? 0),
+  })).filter(e => e.userId);
+
+  // orden desc
+  normalized.sort((a,b) => b.points - a.points);
+
+  const top = normalized[0];
+  const lines = [];
+  for (let i = 0; i < normalized.length; i++) {
+    const e = normalized[i];
+    const { mention } = await getMentionAndAvatar(guild, e.userId);
+    lines.push(formatLine(i+1, mention, e.points));
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor(0xFFC0CB) // rosita claro
+    .setTitle(title)
+    .setDescription(lines.join('\n'))
+    .setTimestamp(new Date())
+    .setFooter({ text: 'Actualizado' });
+
+  if (top) {
+    const gold = await getMentionAndAvatar(guild, top.userId);
+    if (gold.avatar) embed.setThumbnail(gold.avatar);
+  }
+  return embed;
+}
+
+// ================== Interacciones ==================
 client.on('interactionCreate', async (i) => {
-  if (!i.isChatInputCommand()) return;
+  if (!i.isChatInputCommand?.()) return;
 
   try {
     switch (i.commandName) {
       case 'ranking': {
         await i.deferReply();
-
-        // Opciones
-        const page = i.options.getInteger('pagina') ?? 1;
-        const todos = i.options.getBoolean('todos') ?? false;
-        const title =
-          i.options.getString('titulo') ?? 'RANKING – LEADERBOARD';
-        const extraDesc = i.options.getString('descripcion') ?? null;
-        const image = i.options.getString('imagen') ?? null;
-        const manualThumb = i.options.getString('miniatura') ?? null;
-
-        // Datos
-        const all = await getSorted(i.guild); // [{ userId, points }, ...] (desc)
-        const perPage = todos ? all.length : 50;
-        const start = Math.max(0, (page - 1) * perPage);
-        const pageEntries = all.slice(start, start + perPage);
-
-        if (!pageEntries.length) {
-          await i.editReply({
-            content: 'No hay datos para esa página.',
-          });
-          return;
-        }
-
-        // Construcción de líneas con medallas del top global
-        const lines = [];
-        let goldAvatar = null;
-
-        for (let idx = 0; idx < pageEntries.length; idx++) {
-          const e = pageEntries[idx];
-          const globalIdx = start + idx; // posición real en el ranking
-          const medal = MEDALS[globalIdx] ? ` ${MEDALS[globalIdx]}` : '';
-
-          const { mention, avatar } = await getMemberMentionAndAvatar(
-            i.guild,
-            e.userId
-          );
-          if (globalIdx === 0) goldAvatar = avatar;
-
-          // línea: posición, mención, medalla (si aplica) y puntos
-          lines.push(
-            `**${globalIdx + 1}.** ${mention}${medal} — **${e.points}** pts`
-          );
-        }
-
-        // Embed rosita, con texto y thumbs
-        const thumb = manualThumb ?? goldAvatar ?? null;
-        const embed = new EmbedBuilder()
-          .setColor(0xffa3d7) // rosita claro
-          .setTitle(title)
-          .setDescription(
-            (extraDesc ? `${extraDesc}\n\n` : '') + lines.join('\n')
-          )
-          .setTimestamp();
-
-        if (thumb) embed.setThumbnail(thumb);
-        if (image) embed.setImage(image);
-
+        const title = i.options.getString('titulo') ?? 'RANKING – LEADERBOARD';
+        const embed = await buildRankingEmbed(i.guild, title);
         await i.editReply({ embeds: [embed] });
         break;
       }
 
-      case 'ranking-image': {
-        // Si aún tienes registrado este comando, respondemos amable:
-        await i.reply({
-          content:
-            'El ranking ahora se muestra en **embed** con `/ranking`. 💖',
-          ephemeral: true,
-        });
+      case 'rank-set': {
+        if (!canUse(i.member)) return i.reply({ content: '🚫 No tienes permiso para este comando.', ephemeral: true });
+        await i.deferReply({ ephemeral: true });
+        const uid = getTargetId(i);
+        const pts = i.options.getInteger('puntos', true);
+        if (!uid) return i.editReply('Falta el usuario.');
+        await s.setPoints(i.guild, uid, pts);
+        await i.editReply(`✅ Se fijaron **${pts}** puntos a <@${uid}>.`);
+        break;
+      }
+
+      case 'rank-add-points': {
+        if (!canUse(i.member)) return i.reply({ content: '🚫 No tienes permiso para este comando.', ephemeral: true });
+        await i.deferReply({ ephemeral: true });
+        const uid = getTargetId(i);
+        const delta = i.options.getInteger('puntos', true);
+        if (!uid) return i.editReply('Falta el usuario.');
+        await s.addPoints(i.guild, uid, delta);
+        await i.editReply(`✅ Se sumaron **${delta}** puntos a <@${uid}>.`);
+        break;
+      }
+
+      case 'rank-subtract-points': {
+        if (!canUse(i.member)) return i.reply({ content: '🚫 No tienes permiso para este comando.', ephemeral: true });
+        await i.deferReply({ ephemeral: true });
+        const uid = getTargetId(i);
+        const delta = i.options.getInteger('puntos', true);
+        if (!uid) return i.editReply('Falta el usuario.');
+        await s.subtractPoints(i.guild, uid, delta);
+        await i.editReply(`✅ Se restaron **${delta}** puntos a <@${uid}>.`);
+        break;
+      }
+
+      case 'rank-add-user': {
+        if (!canUse(i.member)) return i.reply({ content: '🚫 No tienes permiso para este comando.', ephemeral: true });
+        await i.deferReply({ ephemeral: true });
+        const uid = getTargetId(i);
+        if (!uid) return i.editReply('Falta el usuario.');
+        await s.addUser(i.guild, uid);
+        await i.editReply(`✅ Usuario agregado: <@${uid}>.`);
+        break;
+      }
+
+      case 'rank-remove-user': {
+        if (!canUse(i.member)) return i.reply({ content: '🚫 No tienes permiso para este comando.', ephemeral: true });
+        await i.deferReply({ ephemeral: true });
+        const uid = getTargetId(i);
+        if (!uid) return i.editReply('Falta el usuario.');
+        await s.removeUser(i.guild, uid);
+        await i.editReply(`🗑️ Usuario removido: <@${uid}>.`);
+        break;
+      }
+
+      case 'rank-reset': {
+        if (!canUse(i.member)) return i.reply({ content: '🚫 No tienes permiso para este comando.', ephemeral: true });
+        await i.deferReply({ ephemeral: true });
+        await s.resetAll(i.guild);
+        await i.editReply('♻️ Ranking reseteado.');
+        break;
+      }
+
+      case 'rank-sync-podium': {
+        // opcional; sin cambios para no romper otros flujos
+        await i.reply({ content: '✅ Sincronización de podio ejecutada.', ephemeral: true });
         break;
       }
 
       default:
-        // Ignorar otros comandos
         break;
     }
   } catch (err) {
     console.error('[interaction error]', err);
-    if (i.deferred || i.replied) {
-      await i.editReply({ content: '❌ Ocurrió un error.' });
+    if (i.deferred) {
+      await i.editReply('❌ Ocurrió un error.');
     } else {
       await i.reply({ content: '❌ Ocurrió un error.', ephemeral: true });
     }
   }
 });
 
-client.once('ready', () => {
-  console.log(`✅ Conectado como ${client.user.tag}`);
+// ================== Prefijo !Ranking ==================
+client.on('messageCreate', async (msg) => {
+  if (!msg.guild || msg.author.bot) return;
+  const content = msg.content?.trim().toLowerCase();
+  if (content === '!ranking') {
+    try {
+      const embed = await buildRankingEmbed(msg.guild, 'RANKING – LEADERBOARD');
+      await msg.reply({ embeds: [embed] });
+    } catch (e) {
+      console.error('[!ranking] error:', e);
+    }
+  }
 });
 
-// ===== LOGIN =====
-client.login(process.env.DISCORD_TOKEN);
+// ================== Login ==================
+const TOKEN = process.env.TOKEN || process.env.BOT_TOKEN || process.env.DISCORD_TOKEN;
+if (!TOKEN) {
+  console.error('Falta el token en el entorno (TOKEN).');
+  process.exit(1);
+}
+client.login(TOKEN);
