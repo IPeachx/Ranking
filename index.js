@@ -1,4 +1,5 @@
-// index.js — leaderboard embed (sin canvas), con tags y thumbnail del oro
+// index.js — Ranking en embed con medallas y miniatura del #1
+
 import 'dotenv/config';
 import {
   Client,
@@ -6,62 +7,34 @@ import {
   EmbedBuilder,
 } from 'discord.js';
 
-// ---------- Import de store con fallback seguro ----------
 import * as store from './src/store.js';
 
-/**
- * Selecciona la función getSorted más razonable desde ./src/store.js
- * Espera un array de objetos con al menos: { userId, points } (ordenado desc).
- * Si no existe getSorted, intenta con getAll y lo ordena aquí.
- */
-let getSorted = null;
-if (typeof store.getSorted === 'function') {
-  getSorted = store.getSorted;
-} else if (store.default && typeof store.default.getSorted === 'function') {
-  getSorted = store.default.getSorted;
-} else if (typeof store.getAll === 'function') {
-  getSorted = async (guild) => {
-    const raw = await store.getAll(guild);
-    const list = Array.isArray(raw) ? raw : Array.from(raw?.values?.() ?? []);
-    return list
-      .map((e) => ({
-        ...e,
-        userId:
-          e.userId ?? e.id ?? e.user?.id ?? e.user ?? e.targetId ?? e.uid,
-        points: Number(e.points ?? e.score ?? e.pts ?? 0),
-      }))
-      .filter((e) => e.userId)
-      .sort((a, b) => b.points - a.points);
-  };
-} else if (store.default && typeof store.default.getAll === 'function') {
-  getSorted = async (guild) => {
-    const raw = await store.default.getAll(guild);
-    const list = Array.isArray(raw) ? raw : Array.from(raw?.values?.() ?? []);
-    return list
-      .map((e) => ({
-        ...e,
-        userId:
-          e.userId ?? e.id ?? e.user?.id ?? e.user ?? e.targetId ?? e.uid,
-        points: Number(e.points ?? e.score ?? e.pts ?? 0),
-      }))
-      .filter((e) => e.userId)
-      .sort((a, b) => b.points - a.points);
-  };
-}
+// ===== Helper: valida que getSorted exista =====
+const getSorted =
+  store.getSorted ??
+  (store.default && store.default.getSorted);
 
 if (typeof getSorted !== 'function') {
   console.error('[store] exports:', Object.keys(store));
   throw new Error(
-    'No se encontró getSorted ni getAll en src/store.js. Agrega una de las dos funciones.'
+    'No se encontró la función getSorted en src/store.js (ni como export nombrado ni dentro del default).'
   );
 }
 
-// ---------- Utils ----------
+// ===== Cliente Discord =====
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
+});
+
+// ===== Emojis de medallas (top 3 global) =====
+const MEDALS = ['🥇', '🥈', '🥉']; // puedes cambiarlos por emojis del server
+
+// ===== Utilidad: mención y avatar por userId =====
 async function getMemberMentionAndAvatar(guild, userId) {
   try {
     const m = await guild.members.fetch(userId);
     return {
-      mention: `<@${m.id}>`,
+      mention: m.toString(),
       avatar: m.displayAvatarURL({ size: 256 }),
     };
   } catch {
@@ -69,227 +42,102 @@ async function getMemberMentionAndAvatar(guild, userId) {
   }
 }
 
-// ---------- Discord Client ----------
-const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
-});
-
-// ---------- Registro de comandos ----------
-client.on('clientReady', async () => {
-  console.log('✅ Conectado como', client.user?.tag);
-
-  const commands = [
-    {
-      name: 'ranking',
-      description: 'Muestra el ranking en un solo embed.',
-      options: [
-        {
-          name: 'pagina',
-          description: 'Página (empieza en 1).',
-          type: 4, // Integer
-          required: false,
-        },
-        {
-          name: 'todos',
-          description: 'Incluir a todos los usuarios en una sola lista.',
-          type: 5, // Boolean
-          required: false,
-        },
-        {
-          name: 'titulo',
-          description: 'Título del embed.',
-          type: 3, // String
-          required: false,
-        },
-        {
-          name: 'descripcion',
-          description: 'Texto de descripción encima de la lista.',
-          type: 3, // String
-          required: false,
-        },
-        {
-          name: 'imagen',
-          description: 'Banner grande (URL).',
-          type: 3, // String
-          required: false,
-        },
-        {
-          name: 'miniatura',
-          description: 'Miniatura (URL). Si se omite, usa avatar del oro.',
-          type: 3, // String
-          required: false,
-        },
-      ],
-    },
-    {
-      name: 'ranking-image',
-      description: 'Alias de /ranking (usa el mismo embed).',
-      options: [
-        {
-          name: 'pagina',
-          description: 'Página (empieza en 1).',
-          type: 4,
-          required: false,
-        },
-        {
-          name: 'todos',
-          description: 'Incluir a todos los usuarios en una sola lista.',
-          type: 5,
-          required: false,
-        },
-        {
-          name: 'titulo',
-          description: 'Título del embed.',
-          type: 3,
-          required: false,
-        },
-        {
-          name: 'descripcion',
-          description: 'Texto de descripción encima de la lista.',
-          type: 3,
-          required: false,
-        },
-        {
-          name: 'imagen',
-          description: 'Banner grande (URL).',
-          type: 3,
-          required: false,
-        },
-        {
-          name: 'miniatura',
-          description: 'Miniatura (URL). Si se omite, usa avatar del oro.',
-          type: 3,
-          required: false,
-        },
-      ],
-    },
-  ];
-
-  // Si hay GUILD_ID, registra por guild (más rápido). Si no, global.
-  try {
-    const guildId = process.env.GUILD_ID;
-    if (guildId) {
-      const guild = await client.guilds.fetch(guildId);
-      await guild.commands.set(commands);
-      console.log('⚙️  Comandos registrados en guild:', guildId);
-    } else {
-      await client.application.commands.set(commands);
-      console.log('⚙️  Comandos registrados globalmente.');
-    }
-  } catch (err) {
-    console.error('❌ Error registrando comandos:', err);
-  }
-});
-
-// ---------- Manejador de interacciones ----------
+// ===== Interacciones =====
 client.on('interactionCreate', async (i) => {
   if (!i.isChatInputCommand()) return;
 
   try {
     switch (i.commandName) {
-      case 'ranking':
-      case 'ranking-image': {
+      case 'ranking': {
         await i.deferReply();
 
+        // Opciones
         const page = i.options.getInteger('pagina') ?? 1;
         const todos = i.options.getBoolean('todos') ?? false;
-        const titulo =
-          i.options.getString('titulo') ?? 'LEADERBOARD – Staff';
-        const descripcion = i.options.getString('descripcion') ?? null;
-
-        const banner =
-          i.options.getString('imagen') ??
-          process.env.RANK_BANNER_URL ??
-          null;
+        const title =
+          i.options.getString('titulo') ?? 'RANKING – LEADERBOARD';
+        const extraDesc = i.options.getString('descripcion') ?? null;
+        const image = i.options.getString('imagen') ?? null;
         const manualThumb = i.options.getString('miniatura') ?? null;
 
         // Datos
-        const all = await getSorted(i.guild); // [{ userId, points }, ...] desc
+        const all = await getSorted(i.guild); // [{ userId, points }, ...] (desc)
         const perPage = todos ? all.length : 50;
         const start = Math.max(0, (page - 1) * perPage);
-        const slice = all.slice(start, start + perPage);
+        const pageEntries = all.slice(start, start + perPage);
 
-        if (!slice.length) {
+        if (!pageEntries.length) {
           await i.editReply({
             content: 'No hay datos para esa página.',
           });
           return;
         }
 
-        // Avatar del oro (top global) como thumbnail por defecto
-        let goldAvatar = null;
-        if (all.length) {
-          const goldInfo = await getMemberMentionAndAvatar(
-            i.guild,
-            all[0].userId
-          );
-          goldAvatar = goldInfo.avatar;
-        }
-
-        // Construye líneas con tag y puntos, con interlineado
+        // Construcción de líneas con medallas del top global
         const lines = [];
-        for (let idx = 0; idx < slice.length; idx++) {
-          const e = slice[idx];
-          const { mention } = await getMemberMentionAndAvatar(
+        let goldAvatar = null;
+
+        for (let idx = 0; idx < pageEntries.length; idx++) {
+          const e = pageEntries[idx];
+          const globalIdx = start + idx; // posición real en el ranking
+          const medal = MEDALS[globalIdx] ? ` ${MEDALS[globalIdx]}` : '';
+
+          const { mention, avatar } = await getMemberMentionAndAvatar(
             i.guild,
             e.userId
           );
+          if (globalIdx === 0) goldAvatar = avatar;
+
+          // línea: posición, mención, medalla (si aplica) y puntos
           lines.push(
-            `**${start + idx + 1}.** ${mention} — **${e.points}** pts`
+            `**${globalIdx + 1}.** ${mention}${medal} — **${e.points}** pts`
           );
         }
 
-        const header = descripcion ? `${descripcion}\n\n` : '';
-        let desc = header + lines.join('\n\n');
-        while (desc.length > 4096 && lines.length > 0) {
-          lines.pop();
-          desc =
-            header + lines.join('\n\n') + `\n\n*(lista truncada)*`;
-        }
-
+        // Embed rosita, con texto y thumbs
+        const thumb = manualThumb ?? goldAvatar ?? null;
         const embed = new EmbedBuilder()
-          .setColor(0xff9ad5) // rosita claro
-          .setTitle(titulo)
-          .setDescription(desc)
-          .setTimestamp(new Date());
+          .setColor(0xffa3d7) // rosita claro
+          .setTitle(title)
+          .setDescription(
+            (extraDesc ? `${extraDesc}\n\n` : '') + lines.join('\n')
+          )
+          .setTimestamp();
 
-        if (banner) embed.setImage(banner);
-        if (manualThumb || goldAvatar) {
-          embed.setThumbnail(manualThumb ?? goldAvatar);
-        }
+        if (thumb) embed.setThumbnail(thumb);
+        if (image) embed.setImage(image);
 
         await i.editReply({ embeds: [embed] });
         break;
       }
 
-      default:
+      case 'ranking-image': {
+        // Si aún tienes registrado este comando, respondemos amable:
         await i.reply({
-          content: 'Comando no reconocido.',
+          content:
+            'El ranking ahora se muestra en **embed** con `/ranking`. 💖',
           ephemeral: true,
         });
+        break;
+      }
+
+      default:
+        // Ignorar otros comandos
+        break;
     }
   } catch (err) {
     console.error('[interaction error]', err);
-    try {
-      if (i.deferred || i.replied) {
-        await i.editReply({ content: '❌ Ocurrió un error.' });
-      } else {
-        await i.reply({
-          content: '❌ Ocurrió un error.',
-          ephemeral: true,
-        });
-      }
-    } catch {}
+    if (i.deferred || i.replied) {
+      await i.editReply({ content: '❌ Ocurrió un error.' });
+    } else {
+      await i.reply({ content: '❌ Ocurrió un error.', ephemeral: true });
+    }
   }
 });
 
-// ---------- Login ----------
-const TOKEN = process.env.DISCORD_TOKEN || process.env.TOKEN;
-if (!TOKEN) {
-  console.error(
-    '❌ Falta DISCORD_TOKEN en variables de entorno (Railway / .env).'
-  );
-  process.exit(1);
-}
+client.once('ready', () => {
+  console.log(`✅ Conectado como ${client.user.tag}`);
+});
 
-client.login(TOKEN);
+// ===== LOGIN =====
+client.login(process.env.DISCORD_TOKEN);
