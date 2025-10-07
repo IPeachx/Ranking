@@ -62,6 +62,9 @@ client.on('interactionCreate', async (i) => {
     try {
       const uid  = getTargetId(i);
       const pts  = i.options.getInteger('puntos', true);
+      if (!Number.isInteger(pts) || Math.abs(pts) > 100000) {
+  return i.editReply({ content: '❌ Valor de puntos inválido (¿pusiste un userID en lugar de puntos?).' });
+}
       if (!uid) throw new Error('Falta el usuario.');
       await s.setPoints(i.guildId, uid, pts);
       await i.editReply({ content: `✅ Se fijaron **${pts}** puntos a <@${uid}>.` });
@@ -80,6 +83,9 @@ client.on('interactionCreate', async (i) => {
     try {
       const uid   = getTargetId(i);
       const delta = i.options.getInteger('puntos', true);
+      if (!Number.isInteger(pts) || Math.abs(pts) > 100000) {
+  return i.editReply({ content: '❌ Valor de puntos inválido (¿pusiste un userID en lugar de puntos?).' });
+}
       if (!uid) throw new Error('Falta el usuario.');
       await s.addPoints(i.guildId, uid, delta);
       await i.editReply({ content: `✅ Se sumaron **${delta}** puntos a <@${uid}>.` });
@@ -98,6 +104,9 @@ client.on('interactionCreate', async (i) => {
     try {
       const uid   = getTargetId(i);
       const delta = i.options.getInteger('puntos', true);
+      if (!Number.isInteger(pts) || Math.abs(pts) > 100000) {
+  return i.editReply({ content: '❌ Valor de puntos inválido (¿pusiste un userID en lugar de puntos?).' });
+}
       if (!uid) throw new Error('Falta el usuario.');
       await s.addPoints(i.guildId, uid, -Math.abs(delta));
       await i.editReply({ content: `✅ Se restaron **${Math.abs(delta)}** puntos a <@${uid}>.` });
